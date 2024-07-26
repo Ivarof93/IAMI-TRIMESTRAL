@@ -1,0 +1,688 @@
+import pandas as pd
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename
+import os
+from datetime import datetime
+
+import pandas as pd
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename
+import os
+from datetime import datetime
+
+
+import pandas as pd
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename
+import os
+from datetime import datetime
+
+
+def calcular_edad(fecha_nacimiento, fecha_ingreso):
+    if isinstance(fecha_nacimiento, pd.Timestamp):
+        fecha_nacimiento = fecha_nacimiento.strftime("%d/%m/%Y")
+    if isinstance(fecha_ingreso, pd.Timestamp):
+        fecha_ingreso = fecha_ingreso.strftime("%d/%m/%Y %I:%M:%S %p")
+    fecha_nacimiento = datetime.strptime(fecha_nacimiento, "%d/%m/%Y")
+    fecha_ingreso = datetime.strptime(fecha_ingreso, "%d/%m/%Y %I:%M:%S %p")
+    edad = fecha_ingreso.year - fecha_nacimiento.year - (
+            (fecha_ingreso.month, fecha_ingreso.day) < (fecha_nacimiento.month, fecha_nacimiento.day))
+    return edad
+
+
+def exportar_indicadores_poblacion_infantil(ruta_archivo):
+    try:
+        # Verificar la extensión del archivo y especificar el motor
+        extension = os.path.splitext(ruta_archivo)[1]
+        if extension == '.xlsx':
+            engine = 'openpyxl'
+        elif extension == '.xls':
+            engine = 'xlrd'
+        else:
+            raise ValueError("El archivo debe ser .xlsx o .xls")
+
+        print(f"Leyendo archivo: {ruta_archivo}")
+
+        # Definir el nombre de la hoja de interés
+        hoja = 'Hoja1'
+        columna_procedimiento = 'nomprocedimiento'
+        valor_procedimiento = 'CONSULTA DE CONTROL O SEGUIMIENTO POR ODONTOLOGIA GENERAL'
+
+        # Leer el archivo Excel con los datos de los pacientes especificando el motor
+        df = pd.read_excel(ruta_archivo, sheet_name=hoja, engine=engine)
+
+        # Filtrar por procedimiento de odontología general
+        df_odontologia = df[df[columna_procedimiento] == valor_procedimiento].copy()
+
+        # Calcular la edad de los pacientes
+        df_odontologia.loc[:, 'Edad'] = df_odontologia.apply(
+            lambda row: calcular_edad(row['fechanacimiento'], row['fechaingreso']), axis=1)
+
+        # Filtrar pacientes de 6 meses a 5 años (0.5 a 5 años)
+        df_infantil_0_5 = df_odontologia[(df_odontologia['Edad'] >= 0.5) & (df_odontologia['Edad'] <= 5)]
+
+        # Filtrar pacientes de 6 a 11 años
+        df_infantil_6_11 = df_odontologia[(df_odontologia['Edad'] >= 6) & (df_odontologia['Edad'] <= 11)]
+
+        # Filtrar pacientes de 12 a 17 años
+        df_infantil_12_17 = df_odontologia[(df_odontologia['Edad'] >= 12) & (df_odontologia['Edad'] <= 17)]
+
+        # Contar visitas por paciente
+        visitas_por_paciente_0_5 = df_infantil_0_5.groupby('nohistoria').size()
+        visitas_por_paciente_6_11 = df_infantil_6_11.groupby('nohistoria').size()
+        visitas_por_paciente_12_17 = df_infantil_12_17.groupby('nohistoria').size()
+
+        # Filtrar pacientes que han asistido al menos dos veces al año
+        pacientes_tipo_c_0_5 = visitas_por_paciente_0_5[visitas_por_paciente_0_5 >= 2].index
+        pacientes_tipo_c_6_11 = visitas_por_paciente_6_11[visitas_por_paciente_6_11 >= 2].index
+        pacientes_tipo_c_12_17 = visitas_por_paciente_12_17[visitas_por_paciente_12_17 >= 2].index
+
+        # Filtrar el DataFrame original para incluir solo los pacientes del tipo C
+        df_tipo_c_0_5 = df_infantil_0_5[df_infantil_0_5['nohistoria'].isin(pacientes_tipo_c_0_5)]
+        df_tipo_c_6_11 = df_infantil_6_11[df_infantil_6_11['nohistoria'].isin(pacientes_tipo_c_6_11)]
+        df_tipo_c_12_17 = df_infantil_12_17[df_infantil_12_17['nohistoria'].isin(pacientes_tipo_c_12_17)]
+
+        # Eliminar duplicados basados en la columna 'nohistoria'
+        df_tipo_c_0_5 = df_tipo_c_0_5.drop_duplicates(subset='nohistoria')
+        df_tipo_c_6_11 = df_tipo_c_6_11.drop_duplicates(subset='nohistoria')
+        df_tipo_c_12_17 = df_tipo_c_12_17.drop_duplicates(subset='nohistoria')
+
+        # Obtener la ruta del directorio del archivo seleccionado
+        directorio = os.path.dirname(ruta_archivo)
+
+        # Definir la ruta del archivo de salida
+        ruta_salida = os.path.join(directorio, 'indicadores_poblacion_infantil.xlsx')
+
+        # Crear un objeto ExcelWriter para escribir en un nuevo archivo Excel
+        print(f"Exportando resultados a '{ruta_salida}'...")
+        with pd.ExcelWriter(ruta_salida, engine='openpyxl') as writer:
+            # Procesar los datos por cada sede
+            for sede, grupo in pd.concat([df_tipo_c_0_5, df_tipo_c_6_11, df_tipo_c_12_17]).groupby('NomSede'):
+                # Contar pacientes por género en el rango de 0.5 a 5 años
+                conteo_por_genero_0_5 = grupo[grupo['Edad'].between(0.5, 5)]['codsexo'].value_counts().reindex(
+                    [1, 2, 3], fill_value=0)
+                # Contar pacientes por género en el rango de 6 a 11 años
+                conteo_por_genero_6_11 = grupo[grupo['Edad'].between(6, 11)]['codsexo'].value_counts().reindex(
+                    [1, 2, 3], fill_value=0)
+                # Contar pacientes por género en el rango de 12 a 17 años
+                conteo_por_genero_12_17 = grupo[grupo['Edad'].between(12, 17)]['codsexo'].value_counts().reindex(
+                    [1, 2, 3], fill_value=0)
+
+                # Crear DataFrame con los totales
+                conteo_por_genero_0_5 = conteo_por_genero_0_5.to_frame().T
+                conteo_por_genero_6_11 = conteo_por_genero_6_11.to_frame().T
+                conteo_por_genero_12_17 = conteo_por_genero_12_17.to_frame().T
+                conteo_por_genero_0_5.index = ['0-5 años']
+                conteo_por_genero_6_11.index = ['6-11 años']
+                conteo_por_genero_12_17.index = ['12-17 años']
+
+                # Contar el total general por sede
+                total_sede = pd.concat([conteo_por_genero_0_5, conteo_por_genero_6_11, conteo_por_genero_12_17])
+                total_sede['Total'] = total_sede.sum(axis=1)
+                total_sede = total_sede.loc[['0-5 años', '6-11 años', '12-17 años']]
+
+                # Truncar el nombre de la sede si es demasiado largo
+                nombre_hoja = sede[:30]  # Truncar a 30 caracteres máximo
+
+                # Guardar el resultado en una hoja dentro del mismo archivo Excel
+                total_sede.to_excel(writer, sheet_name=nombre_hoja)
+
+            # Crear una tabla resumen global
+            conteo_global_0_5 = df_tipo_c_0_5['codsexo'].value_counts().reindex([1, 2, 3], fill_value=0)
+            conteo_global_6_11 = df_tipo_c_6_11['codsexo'].value_counts().reindex([1, 2, 3], fill_value=0)
+            conteo_global_12_17 = df_tipo_c_12_17['codsexo'].value_counts().reindex([1, 2, 3], fill_value=0)
+
+            # Crear DataFrame con los totales
+            conteo_global_0_5 = conteo_global_0_5.to_frame().T
+            conteo_global_6_11 = conteo_global_6_11.to_frame().T
+            conteo_global_12_17 = conteo_global_12_17.to_frame().T
+            conteo_global_0_5.index = ['0-5 años']
+            conteo_global_6_11.index = ['6-11 años']
+            conteo_global_12_17.index = ['12-17 años']
+
+            # Contar el total general global
+            total_global = pd.concat([conteo_global_0_5, conteo_global_6_11, conteo_global_12_17])
+            total_global['Total'] = total_global.sum(axis=1)
+            total_global = total_global.loc[['0-5 años', '6-11 años', '12-17 años']]
+
+            # Añadir la tabla resumen global como una nueva hoja en el mismo archivo Excel
+            total_global.to_excel(writer, sheet_name='Resumen Global')
+
+        print(f"Archivo '{ruta_salida}' generado con éxito con la tabla 'Indicadores de población infantil'.")
+
+    except Exception as e:
+        print(f"Error al procesar el archivo: {e}")
+
+
+# Abrir cuadro de diálogo para seleccionar el archivo
+Tk().withdraw()  # Ocultar la ventana principal de Tkinter
+ruta_archivo = askopenfilename(title="Selecciona el archivo Excel", filetypes=[("Excel files", "*.xlsx *.xls")])
+
+# Llamar a la función para exportar los indicadores de población infantil
+exportar_indicadores_poblacion_infantil(ruta_archivo)
+
+
+
+def exportar_indicadores_poblacion_gestante(ruta_archivo):
+    try:
+        # Verificar la extensión del archivo y especificar el motor
+        extension = os.path.splitext(ruta_archivo)[1]
+        if extension == '.xlsx':
+            engine = 'openpyxl'
+        elif extension == '.xls':
+            engine = 'xlrd'
+        else:
+            raise ValueError("El archivo debe ser .xlsx o .xls")
+
+        print(f"Leyendo archivo: {ruta_archivo}")
+
+        # Definir los nombres de las columnas de interés
+        columna_procedimiento = 'nomprocedimiento'
+        valor_procedimiento_a = 'EXAMEN CLINICO DE PRIMER VEZ'
+        valor_procedimiento_b = 'CONSULTA DE CONTROL O SEGUIMIENTO POR ODONTOLOGIA GENERAL'
+        columnas_diagnostico = ['coddxppal', 'coddx1', 'coddx2', 'coddx3']
+        diagnosticos_validos = ['Z357', 'Z358', 'Z359']
+
+        # Leer el archivo Excel con los datos de los pacientes especificando el motor
+        df = pd.read_excel(ruta_archivo, engine=engine)
+
+        # Filtrar por procedimientos y diagnósticos
+        df_a = df[df[columna_procedimiento].str.strip() == valor_procedimiento_a]
+        df_a = df_a[df_a[columnas_diagnostico].apply(lambda row: any(diag in diagnosticos_validos for diag in row), axis=1)]
+
+        df_b = df[df[columna_procedimiento].str.strip() == valor_procedimiento_b]
+        df_b = df_b[df_b[columnas_diagnostico].apply(lambda row: any(diag in diagnosticos_validos for diag in row), axis=1)]
+
+        # Eliminar duplicados de número de historia
+        df_a = df_a.drop_duplicates(subset='nohistoria')
+        df_b = df_b.drop_duplicates(subset='nohistoria')
+
+        # Obtener la ruta del directorio del archivo seleccionado
+        directorio = os.path.dirname(ruta_archivo)
+
+        # Definir la ruta del archivo de salida
+        ruta_salida = os.path.join(directorio, 'indicadores_poblacion_gestante.xlsx')
+
+        # Crear un objeto ExcelWriter para escribir en un nuevo archivo Excel
+        print(f"Exportando resultados a '{ruta_salida}'...")
+        with pd.ExcelWriter(ruta_salida, engine='openpyxl') as writer:
+            # Guardar cada sede en una hoja separada
+            total_tipo_a = 0
+            total_tipo_b = 0
+            for sede in df['NomSede'].unique():
+                # Filtrar los datos por sede
+                grupo_a = df_a[df_a['NomSede'] == sede]
+                grupo_b = df_b[df_b['NomSede'] == sede]
+
+                # Contar registros únicos para tipo A y tipo B
+                tipo_a_count = len(grupo_a)
+                tipo_b_count = len(grupo_b)
+                total_tipo_a += tipo_a_count
+                total_tipo_b += tipo_b_count
+
+                # Crear un DataFrame con los resultados de tipo A y tipo B
+                indicadores_df = pd.DataFrame({
+                    'Indicador': ['Tipo A', 'Tipo B'],
+                    'Cantidad': [tipo_a_count, tipo_b_count]
+                })
+
+                # Guardar el resultado en una hoja dentro del mismo archivo Excel
+                indicadores_df.to_excel(writer, sheet_name=sede[:31], index=False)
+
+            # Crear una hoja con el total del tipo A de todas las sedes
+            total_df_a = pd.DataFrame({'Indicador': ['Total Tipo A'], 'Cantidad': [total_tipo_a]})
+            total_df_a.to_excel(writer, sheet_name='Total Tipo A', index=False)
+
+            # Crear una hoja con el total del tipo B de todas las sedes
+            total_df_b = pd.DataFrame({'Indicador': ['Total Tipo B'], 'Cantidad': [total_tipo_b]})
+            total_df_b.to_excel(writer, sheet_name='Total Tipo B', index=False)
+
+        print(f"Archivo '{ruta_salida}' generado con éxito con hojas separadas para cada sede y hojas con los totales de los tipos A y B.")
+
+    except Exception as e:
+        print(f"Error al procesar el archivo: {e}")
+
+# Función para generar el reporte de pacientes
+def generar_reporte_pacientes():
+    # Función para calcular la edad a partir de la fecha de nacimiento y fecha de ingreso
+    def calcular_edad(fecha_nacimiento, fecha_ingreso):
+        if isinstance(fecha_nacimiento, pd.Timestamp):
+            fecha_nacimiento = fecha_nacimiento.strftime("%d/%m/%Y")
+        if isinstance(fecha_ingreso, pd.Timestamp):
+            fecha_ingreso = fecha_ingreso.strftime("%d/%m/%Y %I:%M:%S %p")
+        fecha_nacimiento = datetime.strptime(fecha_nacimiento, "%d/%m/%Y")
+        fecha_ingreso = datetime.strptime(fecha_ingreso, "%d/%m/%Y %I:%M:%S %p")
+        edad = fecha_ingreso.year - fecha_nacimiento.year - (
+                    (fecha_ingreso.month, fecha_ingreso.day) < (fecha_nacimiento.month, fecha_nacimiento.day))
+        return edad
+
+    # Función para clasificar la edad en rangos
+    def clasificar_edad(edad):
+        if 0 <= edad <= 4:
+            return '0-4'
+        elif 5 <= edad <= 9:
+            return '5-9'
+        elif 10 <= edad <= 14:
+            return '10-14'
+        elif 15 <= edad <= 19:
+            return '15-19'
+        elif 20 <= edad <= 24:
+            return '20-24'
+        elif 25 <= edad <= 29:
+            return '25-29'
+        elif 30 <= edad <= 34:
+            return '30-34'
+        elif 35 <= edad <= 39:
+            return '35-39'
+        elif 40 <= edad <= 44:
+            return '40-44'
+        elif 45 <= edad <= 49:
+            return '45-49'
+        elif 50 <= edad <= 54:
+            return '50-54'
+        else:
+            return '55+'
+
+    # Abrir cuadro de diálogo para seleccionar el archivo
+    Tk().withdraw()  # Ocultar la ventana principal de Tkinter
+    ruta_archivo = askopenfilename(title="Selecciona el archivo Excel", filetypes=[("Excel files", "*.xlsx *.xls")])
+
+    # Verificar la extensión del archivo y especificar el motor
+    extension = os.path.splitext(ruta_archivo)[1]
+    if extension == '.xlsx':
+        engine = 'openpyxl'
+    elif extension == '.xls':
+        engine = 'xlrd'
+    else:
+        raise ValueError("El archivo debe ser .xlsx o .xls")
+
+    # Leer el archivo Excel con los datos de los pacientes especificando el motor
+    try:
+        df = pd.read_excel(ruta_archivo, engine=engine)
+    except Exception as e:
+        print(f"Error al leer el archivo Excel: {e}")
+        return
+
+    # Eliminar duplicados basados en la columna 'nohistoria'
+    df = df.drop_duplicates(subset='nohistoria')
+
+    # Calcular las edades y clasificar en rangos
+    df['Edad'] = df.apply(lambda row: calcular_edad(row['fechanacimiento'], row['fechaingreso']), axis=1)
+    df['Rango de Edad'] = df['Edad'].apply(clasificar_edad)
+
+    # Obtener la ruta del directorio del archivo seleccionado
+    directorio = os.path.dirname(ruta_archivo)
+
+    # Definir la ruta del archivo de salida
+    ruta_salida = os.path.join(directorio, 'resultado_resumen_pacientes.xlsx')
+
+    # Crear un objeto ExcelWriter para escribir múltiples hojas en un mismo archivo
+    with pd.ExcelWriter(ruta_salida, engine='openpyxl') as writer:
+        # Procesar los datos por cada sede
+        for sede, grupo in df.groupby('NomSede'):
+            # Crear una tabla pivote para sumarizar los datos
+            tabla_resumen = grupo.pivot_table(index='Rango de Edad', columns='codsexo', aggfunc='size', fill_value=0)
+
+            # Asegurar que todas las columnas ['Masculino', 'Femenino', 'Otros'] estén presentes
+            for col in [1, 2, 3]:
+                if col not in tabla_resumen.columns:
+                    tabla_resumen[col] = 0
+
+            # Ordenar las columnas para que estén en el orden correcto
+            tabla_resumen = tabla_resumen[[1, 2, 3]]
+
+            # Renombrar las columnas
+            tabla_resumen.columns = ['Masculino', 'Femenino', 'Otros']
+
+            # Agregar una columna de Total por rango de edad
+            tabla_resumen['Total'] = tabla_resumen.sum(axis=1)
+
+            # Calcular los totales generales
+            totales_generales = tabla_resumen[['Masculino', 'Femenino', 'Otros']].sum()
+            totales_generales['Total'] = tabla_resumen['Total'].sum()
+
+            # Convertir totales generales a DataFrame y agregar como última fila
+            fila_totales_generales = pd.DataFrame([totales_generales.values], columns=['Masculino', 'Femenino', 'Otros', 'Total'], index=['Totales generales'])
+
+            # Añadir la tabla resumen como una nueva hoja en el mismo archivo Excel
+            tabla_resumen = pd.concat([tabla_resumen, fila_totales_generales])
+            tabla_resumen.to_excel(writer, sheet_name=sede[:31])
+
+        # Añadir una hoja con el resumen global
+        tabla_resumen_global = df.pivot_table(index='Rango de Edad', columns='codsexo', aggfunc='size', fill_value=0)
+
+        # Asegurar que todas las columnas ['Masculino', 'Femenino', 'Otros'] estén presentes
+        for col in [1, 2, 3]:
+            if col not in tabla_resumen_global.columns:
+                tabla_resumen_global[col] = 0
+
+        # Ordenar las columnas para que estén en el orden correcto
+        tabla_resumen_global = tabla_resumen_global[[1, 2, 3]]
+
+        # Renombrar las columnas
+        tabla_resumen_global.columns = ['Masculino', 'Femenino', 'Otros']
+
+        # Agregar una columna de Total por rango de edad
+        tabla_resumen_global['Total'] = tabla_resumen_global.sum(axis=1)
+
+        # Calcular los totales generales
+        totales_generales_global = tabla_resumen_global[['Masculino', 'Femenino', 'Otros']].sum()
+        totales_generales_global['Total'] = tabla_resumen_global['Total'].sum()
+
+        # Convertir totales generales a DataFrame y agregar como última fila
+        fila_totales_generales_global = pd.DataFrame([totales_generales_global.values], columns=['Masculino', 'Femenino', 'Otros', 'Total'], index=['Totales generales'])
+
+        # Añadir la tabla resumen global como una nueva hoja en el mismo archivo Excel
+        tabla_resumen_global = pd.concat([tabla_resumen_global, fila_totales_generales_global])
+        tabla_resumen_global.to_excel(writer, sheet_name='Resumen Global')
+
+        print(f"Archivo '{ruta_salida}' generado con éxito con hojas separadas para cada sede y una hoja de Resumen Global.")
+
+    # Llamar a la función para exportar los indicadores
+    exportar_indicadores_poblacion_gestante(ruta_archivo)
+
+# Llamar a la función para generar el reporte de pacientes
+generar_reporte_pacientes()
+
+
+def calcular_edad(fecha_nacimiento, fecha_ingreso):
+    if isinstance(fecha_nacimiento, str):
+        fecha_nacimiento = datetime.strptime(fecha_nacimiento, "%d/%m/%Y")
+    else:
+        fecha_nacimiento = pd.to_datetime(fecha_nacimiento).date()
+
+    if isinstance(fecha_ingreso, str):
+        fecha_ingreso = datetime.strptime(fecha_ingreso, "%d/%m/%Y %I:%M:%S %p")
+    else:
+        fecha_ingreso = pd.to_datetime(fecha_ingreso)
+
+    edad = fecha_ingreso.year - fecha_nacimiento.year - (
+            (fecha_ingreso.month, fecha_ingreso.day) < (fecha_nacimiento.month, fecha_nacimiento.day))
+    return edad
+
+def exportar_indicadores_por_sede(ruta_archivo):
+    try:
+        # Verificar la extensión del archivo y especificar el motor
+        extension = os.path.splitext(ruta_archivo)[1]
+        if extension == '.xlsx':
+            engine = 'openpyxl'
+        elif extension == '.xls':
+            engine = 'xlrd'
+        else:
+            raise ValueError("El archivo debe ser .xlsx o .xls")
+
+        print(f"Leyendo archivo: {ruta_archivo}")
+
+        # Definir el nombre de la hoja de interés
+        hoja = 'Hoja1'
+        columna_procedimiento = 'codprocedimiento'
+        valores_procedimiento = ['89030144', '89020104', '89030504']
+        columna_procedimiento_texto = 'nomprocedimiento'
+        texto_criterio2 = 'primera vez'
+
+        # Leer el archivo Excel con los datos de los pacientes especificando el motor
+        df = pd.read_excel(ruta_archivo, sheet_name=hoja, engine=engine)
+
+        # Asegurarse de que las columnas relevantes estén en el formato correcto
+        df['Edad'] = df.apply(
+            lambda row: calcular_edad(row['fechanacimiento'], row['fechaingreso']), axis=1)
+
+        # Filtrar pacientes menores de 10 años
+        df_menores_10 = df[df['Edad'] < 10]
+
+        # Filtrar pacientes con los códigos específicos en la columna codprocedimiento
+        df_menores_10_cod = df_menores_10[df_menores_10[columna_procedimiento].astype(str).isin(valores_procedimiento)]
+
+        # Contar pacientes por género para el Criterio 1
+        conteo_genero_menores_10 = df_menores_10_cod['codsexo'].value_counts().reindex([1, 2, 3], fill_value=0)
+        conteo_genero_menores_10.index = ['Niños', 'Niñas', 'Otros']
+
+        # Contar pacientes que contengan 'primera vez' en el Criterio 2
+        df_criterio2 = df[df[columna_procedimiento_texto].str.contains(texto_criterio2, case=False, na=False)]
+        conteo_genero_criterio2 = df_criterio2['codsexo'].value_counts().reindex([1, 2, 3], fill_value=0)
+        conteo_genero_criterio2.index = ['Niños', 'Niñas', 'Otros']
+
+        # Crear DataFrame con los resultados del Criterio 1
+        resultado_menores_10 = pd.DataFrame({
+            'Criterios': ['Menores de 10 años con códigos específicos'],
+            'Total': [conteo_genero_menores_10.sum()],
+            'Niñas': [conteo_genero_menores_10['Niñas']],
+            'Niños': [conteo_genero_menores_10['Niños']]
+        })
+
+        # Crear DataFrame con los resultados del Criterio 2
+        resultado_criterio2 = pd.DataFrame({
+            'Criterios': ['Pacientes con "primera vez" en nomprocedimiento'],
+            'Total': [conteo_genero_criterio2.sum()],
+            'Niñas': [conteo_genero_criterio2['Niñas']],
+            'Niños': [conteo_genero_criterio2['Niños']]
+        })
+
+        # Obtener la ruta del directorio del archivo seleccionado
+        directorio = os.path.dirname(ruta_archivo)
+
+        # Definir la ruta del archivo de salida
+        ruta_salida = os.path.join(directorio, 'indicadores_por_sede.xlsx')
+
+        # Crear un objeto ExcelWriter para escribir en un nuevo archivo Excel
+        print(f"Exportando resultados a '{ruta_salida}'...")
+        with pd.ExcelWriter(ruta_salida, engine='openpyxl') as writer:
+            resumen_total = {
+                'Criterios': ['Menores de 10 años con códigos específicos', 'Pacientes con "primera vez" en nomprocedimiento'],
+                'Total': [conteo_genero_menores_10.sum(), conteo_genero_criterio2.sum()],
+                'Niñas': [conteo_genero_menores_10['Niñas'], conteo_genero_criterio2['Niñas']],
+                'Niños': [conteo_genero_menores_10['Niños'], conteo_genero_criterio2['Niños']]
+            }
+
+            # Procesar los datos por cada sede
+            for sede, grupo in df.groupby('NomSede'):
+                # Filtrar por sede
+                grupo_menores_10 = grupo[grupo['Edad'] < 10]
+                grupo_menores_10_cod = grupo_menores_10[grupo_menores_10[columna_procedimiento].astype(str).isin(valores_procedimiento)]
+
+                # Contar pacientes por género en la sede para el Criterio 1
+                conteo_genero_menores_10_sede = grupo_menores_10_cod['codsexo'].value_counts().reindex([1, 2, 3], fill_value=0)
+                conteo_genero_menores_10_sede.index = ['Niños', 'Niñas', 'Otros']
+
+                # Contar pacientes por género en la sede para el Criterio 2
+                grupo_criterio2 = grupo[grupo[columna_procedimiento_texto].str.contains(texto_criterio2, case=False, na=False)]
+                conteo_genero_criterio2_sede = grupo_criterio2['codsexo'].value_counts().reindex([1, 2, 3], fill_value=0)
+                conteo_genero_criterio2_sede.index = ['Niños', 'Niñas', 'Otros']
+
+                # Crear DataFrame con los resultados para la sede
+                resultado_menores_10_sede = pd.DataFrame({
+                    'Criterios': ['Menores de 10 años con códigos específicos', 'Pacientes con "primera vez" en nomprocedimiento'],
+                    'Total': [conteo_genero_menores_10_sede.sum(), conteo_genero_criterio2_sede.sum()],
+                    'Niñas': [conteo_genero_menores_10_sede['Niñas'], conteo_genero_criterio2_sede['Niñas']],
+                    'Niños': [conteo_genero_menores_10_sede['Niños'], conteo_genero_criterio2_sede['Niños']]
+                })
+
+                # Truncar el nombre de la sede si es demasiado largo
+                nombre_hoja = sede[:30]  # Truncar a 30 caracteres máximo
+
+                # Guardar el resultado en una hoja dentro del mismo archivo Excel
+                resultado_menores_10_sede.to_excel(writer, sheet_name=nombre_hoja, index=False)
+
+            # Crear DataFrame con el resumen total
+            resultado_resumen_total = pd.DataFrame(resumen_total)
+
+            # Guardar el resumen en una hoja adicional
+            resultado_resumen_total.to_excel(writer, sheet_name='Resumen Total', index=False)
+
+            print(f"Archivo '{ruta_salida}' generado con éxito con la tabla de indicadores por sede y resumen total.")
+
+    except Exception as e:
+        print(f"Error al procesar el archivo: {e}")
+
+# Abrir cuadro de diálogo para seleccionar el archivo
+Tk().withdraw()  # Ocultar la ventana principal de Tkinter
+ruta_archivo = askopenfilename(title="Selecciona el archivo Excel", filetypes=[("Excel files", "*.xlsx *.xls")])
+
+# Llamar a la función para exportar los indicadores por sede
+exportar_indicadores_por_sede(ruta_archivo)
+
+import pandas as pd
+import os
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename
+
+def calcular_edad(fecha_nacimiento, fecha_ingreso):
+    delta = pd.to_datetime(fecha_ingreso) - pd.to_datetime(fecha_nacimiento)
+    return delta.days / 365.25
+
+def exportar_indicadores_por_sede(ruta_archivo):
+    try:
+        # Verificar la extensión del archivo y especificar el motor
+        extension = os.path.splitext(ruta_archivo)[1]
+        if extension == '.xlsx':
+            engine = 'openpyxl'
+        elif extension == '.xls':
+            engine = 'xlrd'
+        else:
+            raise ValueError("El archivo debe ser .xlsx o .xls")
+
+        print(f"Leyendo archivo: {ruta_archivo}")
+
+        # Definir el nombre de la hoja de interés
+        hoja = 'Hoja1'
+        columna_procedimiento = 'codprocedimiento'
+        valores_procedimiento = ['89030144', '89020104', '89030504']
+        columna_procedimiento_texto = 'nomprocedimiento'
+        texto_criterio2 = 'primera vez'
+        columna_tipo_servicio = 'nomtiposervicio'
+        texto_criterio6 = 'URGENCIAS'
+        texto_criterio7 = 'CONSULTA EXTERNA'
+        columna_dx_ppal = 'coddxppal'
+        valores_procedimiento_ira = ['39145', '39141']
+        valores_coddxppal_ira = ['J00X', 'J010', 'J011', 'J012', 'J013', 'J014', 'J018', 'J019', 'J020', 'J028', 
+                                  'J029', 'J030', 'J038', 'J039', 'J040', 'J041', 'J042', 'J050', 'J051', 'J060', 
+                                  'J068', 'J069', 'J100', 'J101', 'J108', 'J110', 'J111', 'J118', 'J120', 'J121', 
+                                  'J122', 'J128', 'J129', 'J13X', 'J14X', 'J150', 'J151', 'J152', 'J153', 'J154', 
+                                  'J155', 'J156', 'J157', 'J158', 'J159', 'J160', 'J168', 'J170', 'J171', 'J172', 
+                                  'J173', 'J178', 'J180', 'J181', 'J182', 'J188', 'J189', 'J200', 'J201', 'J202', 
+                                  'J203', 'J204', 'J205', 'J206', 'J207', 'J208', 'J209', 'J210', 'J218', 'J219', 
+                                  'J22X']
+        # Nuevos códigos para Criterio 10
+        codigos_eda = ['A020', 'A029', 'A030', 'A031', 'A032', 'A033', 'A038', 'A039', 'A040', 'A041', 
+                        'A042', 'A043', 'A044', 'A045', 'A046', 'A047', 'A048', 'A049', 'A050', 'A052', 
+                        'A053', 'A054', 'A058', 'A059', 'A060', 'A069', 'A070', 'A071', 'A072', 'A073', 
+                        'A078', 'A079', 'A080', 'A081', 'A082', 'A083', 'A084', 'A085', 'A09X']
+        # Nuevos códigos para Criterio 11
+        codigos_eda_urgen = codigos_eda
+
+        # Leer el archivo Excel con los datos de los pacientes especificando el motor
+        df = pd.read_excel(ruta_archivo, sheet_name=hoja, engine=engine)
+
+        # Asegurarse de que las columnas relevantes estén en el formato correcto
+        df['Edad'] = df.apply(lambda row: calcular_edad(row['fechanacimiento'], row['fechaingreso']), axis=1)
+
+        # Función auxiliar para contar por género
+        def contar_genero(df):
+            conteo = df['codsexo'].value_counts().reindex([1, 2, 3], fill_value=0)
+            conteo.index = ['Niños', 'Niñas', 'Otros']
+            return conteo
+
+        # Filtrar datos por criterios
+        def aplicar_filtros(df):
+            # Criterio 1: Menores de 10 años con códigos específicos
+            df_criterio1 = df[(df['Edad'] < 10) & df[columna_procedimiento].astype(str).isin(valores_procedimiento)]
+            
+            # Criterio 2: Pacientes menores de 6 meses con "primera vez" en nomprocedimiento (sin duplicados)
+            df_criterio2 = df[(df['Edad'] < 0.5) & df[columna_procedimiento_texto].str.contains(texto_criterio2, case=False, na=False)]
+            df_criterio2 = df_criterio2.drop_duplicates(subset=['nohistoria'])
+            
+            # Criterio 3: Menores de 1 año (sin duplicados)
+            df_criterio3 = df[(df['Edad'] < 1)]
+            df_criterio3 = df_criterio3.drop_duplicates(subset=['nohistoria'])
+            
+            # Criterio 4: Pacientes entre 1 y 5 años (sin duplicados)
+            df_criterio4 = df[(df['Edad'] >= 1) & (df['Edad'] <= 5)]
+            df_criterio4 = df_criterio4.drop_duplicates(subset=['nohistoria'])
+            
+            # Criterio 5: Pacientes entre 6 y 9 años (sin duplicados)
+            df_criterio5 = df[(df['Edad'] >= 6) & (df['Edad'] <= 9)]
+            df_criterio5 = df_criterio5.drop_duplicates(subset=['nohistoria'])
+            
+            # Criterio 6: Pacientes menores de 6 años con "URGENCIAS" en nomtiposervicio
+            df_criterio6 = df[(df['Edad'] < 6) & df[columna_tipo_servicio].str.contains(texto_criterio6, case=False, na=False)]
+            
+            # Criterio 7: Pacientes menores de 6 años con "CONSULTA EXTERNA" en nomtiposervicio (incluyendo duplicados)
+            df_criterio7 = df[(df['Edad'] < 6) & df[columna_tipo_servicio].str.contains(texto_criterio7, case=False, na=False)]
+            
+            # Criterio 8: Pacientes menores de 6 años con códigos específicos en codprocedimiento y coddxppal
+            df_criterio8 = df[(df[columna_procedimiento].astype(str).isin(valores_procedimiento_ira)) & 
+                              (df[columna_dx_ppal].astype(str).isin(valores_coddxppal_ira)) & 
+                              (df['Edad'] < 6)]
+            
+            # Criterio 9: Pacientes del Criterio 8 con "URGENCIAS" en nomtiposervicio
+            df_criterio9 = df_criterio8[df_criterio8[columna_tipo_servicio].str.contains(texto_criterio6, case=False, na=False)]
+            
+            # Criterio 10: Pacientes menores de 6 años con códigos EDA en coddxppal y "CONSULTA EXTERNA" en nomtiposervicio
+            df_criterio10 = df[(df['Edad'] < 6) & df[columna_dx_ppal].astype(str).isin(codigos_eda) & 
+                               df[columna_tipo_servicio].str.contains(texto_criterio7, case=False, na=False)]
+            
+            # Criterio 11: Pacientes menores de 6 años con códigos EDA en coddxppal y "URGENCIAS" en nomtiposervicio
+            df_criterio11 = df[(df['Edad'] < 6) & df[columna_dx_ppal].astype(str).isin(codigos_eda) & 
+                               df[columna_tipo_servicio].str.contains(texto_criterio6, case=False, na=False)]
+            
+            return {
+                'Menores de 10 años con códigos específicos': df_criterio1,
+                'Pacientes menores de 6 meses con "primera vez" en nomprocedimiento (sin duplicados)': df_criterio2,
+                'Menores de 1 año (sin duplicados)': df_criterio3,
+                'Pacientes entre 1 y 5 años (sin duplicados)': df_criterio4,
+                'Pacientes entre 6 y 9 años (sin duplicados)': df_criterio5,
+                'Pacientes menores de 6 años con "URGENCIAS" en nomtiposervicio': df_criterio6,
+                'Pacientes menores de 6 años con "CONSULTA EXTERNA" en nomtiposervicio': df_criterio7,
+                'Pacientes menores de 6 años con códigos específicos en codprocedimiento y coddxppal': df_criterio8,
+                'Pacientes del Criterio 8 con "URGENCIAS" en nomtiposervicio': df_criterio9,
+                'Pacientes menores de 6 años con códigos EDA en coddxppal': df_criterio10,
+                'Pacientes menores de 6 años con códigos EDA en coddxppal y "URGENCIAS" en nomtiposervicio': df_criterio11
+            }
+
+        # Calcular los resultados para cada criterio
+        def calcular_resultados(df):
+            resultados = {}
+            filtros = aplicar_filtros(df)
+            for criterio, df_criterio in filtros.items():
+                conteo_genero = contar_genero(df_criterio)
+                resultados[criterio] = {
+                    'Total': conteo_genero.sum(),
+                    'Niñas': conteo_genero['Niñas'],
+                    'Niños': conteo_genero['Niños']
+                }
+            return resultados
+
+        # Obtener la ruta del directorio del archivo seleccionado
+        directorio = os.path.dirname(ruta_archivo)
+
+        # Definir la ruta del archivo de salida
+        ruta_salida = os.path.join(directorio, 'indicadores_por_sede.xlsx')
+
+        # Crear un objeto ExcelWriter para escribir en un nuevo archivo Excel
+        print(f"Exportando resultados a '{ruta_salida}'...")
+        with pd.ExcelWriter(ruta_salida, engine='openpyxl') as writer:
+            # Exportar resultados por sede
+            for sede, grupo in df.groupby('NomSede'):
+                resultados_sede = calcular_resultados(grupo)
+                df_resultados_sede = pd.DataFrame(resultados_sede).T
+                df_resultados_sede.to_excel(writer, sheet_name=sede, index=True)
+
+            # Exportar resultados totales
+            resultados_totales = calcular_resultados(df)
+            df_resultados_totales = pd.DataFrame(resultados_totales).T
+            df_resultados_totales.to_excel(writer, sheet_name='Resumen', index=True)
+
+        print(f"Resultados exportados a '{ruta_salida}'")
+    
+    except Exception as e:
+        print(f"Error al procesar el archivo: {e}")
+
+if __name__ == "__main__":
+    # Inicializar la interfaz de selección de archivos
+    Tk().withdraw()
+    ruta_archivo = askopenfilename(title="Selecciona el archivo Excel con datos de pacientes",
+                                   filetypes=[("Archivos Excel", "*.xlsx;*.xls")])
+    if ruta_archivo:
+        exportar_indicadores_por_sede(ruta_archivo)
+    else:
+        print("No se seleccionó ningún archivo.")
